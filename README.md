@@ -47,6 +47,55 @@ Video -> cv_service -> Kafka topic (equipment.events) -> analytics_service -> Po
 3. Open dashboard:
    - http://localhost:8501
 
+
+## How to run and test
+
+### 1) Local Python tests (fastest)
+
+```bash
+make install
+make test
+```
+
+Equivalent without Make:
+
+```bash
+python -m pip install --upgrade pip
+pip install -r requirements.txt
+pytest -q
+```
+
+### 2) Full stack with Docker Compose
+
+```bash
+cp .env.example .env
+docker compose up --build -d
+docker compose ps
+```
+
+Open UI:
+- http://localhost:8501
+
+Tail logs:
+
+```bash
+docker compose logs -f --tail=150
+```
+
+Stop and clean:
+
+```bash
+docker compose down -v
+```
+
+### 3) One-command smoke test script
+
+```bash
+./scripts/smoke_test.sh
+```
+
+This script starts the stack, waits briefly, prints service status, and shows recent logs for `cv_service`, `analytics_service`, and `ui_service`.
+
 ## Service responsibilities
 
 ### `services/cv_service`
@@ -86,6 +135,28 @@ Video -> cv_service -> Kafka topic (equipment.events) -> analytics_service -> Po
   }
 }
 ```
+
+
+## Implementation status (important)
+
+This repository is currently a **working MVP scaffold**, **not a fully complete production implementation** yet.
+
+### Already implemented
+- End-to-end microservice topology with Docker Compose
+- Kafka producer/consumer wiring
+- PostgreSQL sink with `frame_events` + `equipment_summary`
+- Streamlit dashboard reading live summary data
+- Typed event schema and sample payload contract
+
+### Still to complete for a full interview-grade submission
+- Real CV inference in `cv_service` (YOLO + tracker) instead of synthetic event generation
+- Articulated-part motion analysis (arm/bucket ROI optical-flow or frame-diff)
+- Rule engine for DIGGING / SWINGING_LOADING / DUMPING / WAITING using real cues
+- Video overlay output + UI playback panel
+- Tests beyond schema validation (integration + utilization accuracy + service smoke tests)
+- Metrics/logging/health endpoints and basic failure handling
+
+If you present this today, describe it as **Phase-1 foundation complete** with **CV intelligence pending implementation**.
 
 ## Day-by-day execution plan
 
