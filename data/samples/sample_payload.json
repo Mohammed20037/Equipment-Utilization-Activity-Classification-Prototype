@@ -1,0 +1,17 @@
+{
+  "frame_id": 450,
+  "equipment_id": "EX-001",
+  "equipment_class": "excavator",
+  "timestamp": 15.0,
+  "utilization": {
+    "current_state": "ACTIVE",
+    "current_activity": "DIGGING",
+    "motion_source": "arm_only"
+  },
+  "time_analytics": {
+    "total_tracked_seconds": 15.0,
+    "total_active_seconds": 12.5,
+    "total_idle_seconds": 2.5,
+    "utilization_percent": 83.3
+  }
+}
