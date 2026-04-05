@@ -96,6 +96,17 @@ docker compose down -v
 
 This script starts the stack, waits briefly, prints service status, and shows recent logs for `cv_service`, `analytics_service`, and `ui_service`.
 
+
+### CV model configuration
+
+By default the CV service uses a YOLO model backend (`CV_MODEL_BACKEND=yolo`).
+If model loading is unavailable, it automatically falls back to motion-only detection.
+You can force fallback mode with:
+
+```bash
+CV_MODEL_BACKEND=motion
+```
+
 ## Service responsibilities
 
 ### `services/cv_service`

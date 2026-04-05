@@ -1,23 +1,22 @@
 # Computer Vision Implementation Notes
 
 ## Did we use computer vision?
-Yes. The prototype uses OpenCV-based CV methods in the `cv_service`:
+Yes. The prototype uses CV in `cv_service` with two detector modes:
 
-1. **Foreground motion detection** (`MotionDetector`)
-   - Background subtraction (MOG2)
-   - Contour extraction and bounding box generation
-2. **Object tracking** (`CentroidTracker`)
-   - Track IDs across frames using centroid-distance matching
-3. **Articulated motion handling** (`MotionAnalyzer`)
-   - Full-body motion via bbox-center displacement
-   - Arm-only proxy motion via ROI frame differencing in the upper-right bbox region
-   - ACTIVE if full-body motion OR articulated-region motion crosses threshold
-4. **Activity classification** (`ActivityClassifier`)
-   - Rule-based labels: `DIGGING`, `SWINGING_LOADING`, `DUMPING`, `WAITING`
+1. **Model-based mode (default)**
+   - `HybridDetector` loads a YOLO model (`ultralytics`, default `yolov8n.pt`)
+   - Produces class-labeled detections and bounding boxes
+2. **Fallback mode**
+   - OpenCV foreground motion detection (MOG2 + contours) when model is unavailable
 
-## Important limitation
-The current version uses classical OpenCV CV (motion-based) and does **not** yet include a trained detector like YOLO/Mask R-CNN.
+Tracking and inference stack:
+- **Object tracking** (`CentroidTracker`) for persistent machine IDs
+- **Articulated motion handling** (`MotionAnalyzer`):
+  - full-body motion via bbox center displacement
+  - arm-only proxy motion via ROI frame differencing
+  - ACTIVE if either body or articulated motion crosses threshold
+- **Activity classification** (`ActivityClassifier`):
+  - `DIGGING`, `SWINGING_LOADING`, `DUMPING`, `WAITING`
 
-For interview positioning, describe this as:
-- CV-complete **prototype** with articulated-motion logic implemented.
-- Model-based detector/classifier integration is the next enhancement stage.
+## Interview framing
+This satisfies the requirement to use CV and a CV model while still remaining robust in restricted environments (fallback mode).

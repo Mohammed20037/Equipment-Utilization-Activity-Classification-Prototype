@@ -7,7 +7,7 @@ import cv2
 from confluent_kafka import Producer
 
 from services.cv_service.activity_classifier import ActivityClassifier
-from services.cv_service.detector import MotionDetector
+from services.cv_service.detector import HybridDetector
 from services.cv_service.motion_analyzer import MotionAnalyzer
 from services.cv_service.payload_builder import PayloadBuilder
 from services.cv_service.tracker import CentroidTracker
@@ -46,7 +46,7 @@ def main() -> None:
     output_frame_path.parent.mkdir(parents=True, exist_ok=True)
 
     producer = build_producer()
-    detector = MotionDetector(min_area=int(os.getenv("MIN_DET_AREA", "2200")))
+    detector = HybridDetector()
     tracker = CentroidTracker()
     motion = MotionAnalyzer(
         full_body_threshold=float(os.getenv("FULL_BODY_THRESHOLD", "3.0")),
@@ -75,6 +75,8 @@ def main() -> None:
         timestamp = format_ts(timestamp_sec)
         detections = detector.detect(frame)
         tracks = tracker.update(detections)
+
+        cv2.putText(frame, f"detector={detector.backend}", (8, 22), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 2, cv2.LINE_AA)
 
         for tr in tracks:
             motion_result = motion.analyze(frame, tr.track_id, tr.bbox)
