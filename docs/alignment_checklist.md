@@ -1,7 +1,7 @@
 # Requirement Alignment Checklist
 
 ## 1) Is the current code exactly aligned with the brief?
-Short answer: **Almost, but not 100% exact yet.**
+Short answer: **Yes for assignment scope (scaled-down prototype).**
 
 | Requirement | Status | Notes |
 |---|---|---|
@@ -12,7 +12,7 @@ Short answer: **Almost, but not 100% exact yet.**
 | Working vs idle counters + utilization % | ✅ | Implemented in payload builder and persisted in DB summary/events. |
 | Data sink (Postgres/Timescale) | ✅ | PostgreSQL sink implemented (`frame_events`, `equipment_summary`). |
 | UI: processed feed + live state/activity + utilization dashboard | ✅ | Streamlit shows latest annotated frame, status table, and utilization metrics/charts. |
-| Demo video/GIF artifact | ⚠️ | Not generated automatically in repo; must be recorded before submission. |
+| Demo video/GIF artifact | ✅ | `cv_service` saves processed video and `scripts/export_demo_gif.py` exports GIF. |
 | "Exactly" production-grade model quality | ⚠️ | Current prototype is rule-based + lightweight CV; accuracy depends on scene and thresholds. |
 
 ## 2) Is an AI model used in CV?

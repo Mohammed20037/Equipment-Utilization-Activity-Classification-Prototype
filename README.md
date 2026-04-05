@@ -54,7 +54,10 @@ Video -> cv_service -> Kafka topic (equipment.events) -> analytics_service -> Po
 
 ```bash
 make install
+make data
 make test
+# after running stack for a while
+make demo
 ```
 
 Equivalent without Make:
@@ -64,6 +67,13 @@ python -m pip install --upgrade pip
 pip install -r requirements.txt
 pytest -q
 ```
+
+
+### Open-source data used
+
+- Source manifest: `data/metadata/open_source_video_sources.csv`
+- Downloader: `python scripts/download_open_source_data.py` (or `make data`)
+- CV service auto-selects first local clip from `data/raw_videos/` when `VIDEO_SOURCE` is empty.
 
 ### 2) Full stack with Docker Compose
 
@@ -211,3 +221,14 @@ Suggested flow: start stack, let CV process frames, open dashboard, and capture 
 ## Requirement alignment checklist
 
 See `docs/alignment_checklist.md` for a requirement-by-requirement pass/partial assessment and data guidance.
+
+
+## Demo GIF export
+
+After running the pipeline and generating `data/processed/processed_output.mp4`, export a GIF with:
+
+```bash
+python scripts/export_demo_gif.py
+# or
+make demo
+```

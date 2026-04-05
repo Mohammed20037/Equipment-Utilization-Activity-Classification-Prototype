@@ -1,4 +1,4 @@
-.PHONY: install test up down logs ps
+.PHONY: install test data demo up down logs ps
 
 install:
 	python -m pip install --upgrade pip
@@ -6,6 +6,12 @@ install:
 
 test:
 	pytest -q
+
+data:
+	python scripts/download_open_source_data.py
+
+demo:
+	python scripts/export_demo_gif.py
 
 up:
 	cp -n .env.example .env || true

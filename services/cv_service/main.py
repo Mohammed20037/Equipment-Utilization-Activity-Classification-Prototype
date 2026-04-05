@@ -17,6 +17,18 @@ def build_producer() -> Producer:
     return Producer({"bootstrap.servers": os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")})
 
 
+
+
+def resolve_video_source(video_path: str) -> str:
+    if video_path:
+        return video_path
+    raw_dir = Path("data/raw_videos")
+    for ext in ("*.mp4", "*.avi", "*.mov", "*.mkv"):
+        matches = sorted(raw_dir.glob(ext))
+        if matches:
+            return str(matches[0])
+    return ""
+
 def format_ts(seconds: float) -> str:
     millis = int((seconds - int(seconds)) * 1000)
     return str(timedelta(seconds=int(seconds))) + f".{millis:03d}"
@@ -40,9 +52,10 @@ def annotate_frame(frame, track_id, bbox, state, activity):
 
 def main() -> None:
     topic = os.getenv("KAFKA_TOPIC", "equipment.events")
-    video_path = os.getenv("VIDEO_SOURCE", "")
+    video_path = resolve_video_source(os.getenv("VIDEO_SOURCE", ""))
     fps_fallback = float(os.getenv("FRAME_RATE_FALLBACK", "10"))
     output_frame_path = Path(os.getenv("OUTPUT_FRAME_PATH", "data/processed/latest.jpg"))
+    processed_video_path = os.getenv("PROCESSED_VIDEO_PATH", "data/processed/processed_output.mp4")
     output_frame_path.parent.mkdir(parents=True, exist_ok=True)
 
     producer = build_producer()
@@ -56,10 +69,15 @@ def main() -> None:
     payload_builder = PayloadBuilder()
 
     cap = cv2.VideoCapture(video_path) if video_path else cv2.VideoCapture(0)
+    if not cap.isOpened():
+        raise RuntimeError("Unable to open video source. Set VIDEO_SOURCE or place video in data/raw_videos/")
+
     fps = cap.get(cv2.CAP_PROP_FPS)
     if not fps or fps <= 1:
         fps = fps_fallback
     delta_t = 1.0 / fps
+
+    writer = None
 
     frame_id = 0
     t0 = time.time()
@@ -69,6 +87,11 @@ def main() -> None:
         if not ok:
             cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
             continue
+
+        if writer is None:
+            h, w = frame.shape[:2]
+            fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+            writer = cv2.VideoWriter(processed_video_path, fourcc, fps, (w, h))
 
         frame_id += 1
         timestamp_sec = time.time() - t0
@@ -96,6 +119,8 @@ def main() -> None:
             producer.produce(topic, event.model_dump_json().encode("utf-8"))
 
         cv2.imwrite(str(output_frame_path), frame)
+        if writer is not None:
+            writer.write(frame)
         producer.poll(0)
         time.sleep(delta_t)
 
