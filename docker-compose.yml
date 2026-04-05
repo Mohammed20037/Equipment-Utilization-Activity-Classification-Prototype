@@ -43,6 +43,9 @@ services:
     command: python -m services.cv_service.main
     env_file:
       - .env
+    volumes:
+      - ./data/processed:/app/data/processed
+      - ./data/raw_videos:/app/data/raw_videos
     depends_on:
       - kafka
 
@@ -64,6 +67,8 @@ services:
     command: streamlit run services/ui_service/app.py --server.port=8501 --server.address=0.0.0.0
     env_file:
       - .env
+    volumes:
+      - ./data/processed:/app/data/processed
     ports:
       - "8501:8501"
     depends_on:

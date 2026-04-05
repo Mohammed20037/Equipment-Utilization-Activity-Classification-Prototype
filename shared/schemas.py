@@ -18,6 +18,7 @@ class EquipmentEvent(BaseModel):
     frame_id: int
     equipment_id: str
     equipment_class: str
-    timestamp: float
+    timestamp: str
+    timestamp_sec: float
     utilization: UtilizationBlock
     time_analytics: TimeAnalyticsBlock

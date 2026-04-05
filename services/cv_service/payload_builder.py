@@ -15,7 +15,18 @@ class PayloadBuilder:
     def __init__(self):
         self.totals: Dict[str, Totals] = {}
 
-    def build(self, frame_id: int, timestamp: float, equipment_id: str, equipment_class: str, state: str, activity: str, motion_source: str, delta_t: float) -> EquipmentEvent:
+    def build(
+        self,
+        frame_id: int,
+        timestamp: str,
+        timestamp_sec: float,
+        equipment_id: str,
+        equipment_class: str,
+        state: str,
+        activity: str,
+        motion_source: str,
+        delta_t: float,
+    ) -> EquipmentEvent:
         totals = self.totals.setdefault(equipment_id, Totals())
         totals.tracked += delta_t
         if state == "ACTIVE":
@@ -29,6 +40,7 @@ class PayloadBuilder:
             equipment_id=equipment_id,
             equipment_class=equipment_class,
             timestamp=timestamp,
+            timestamp_sec=timestamp_sec,
             utilization=UtilizationBlock(
                 current_state=state,
                 current_activity=activity,

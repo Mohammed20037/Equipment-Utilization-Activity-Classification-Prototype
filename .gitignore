@@ -2,3 +2,6 @@ __pycache__/
 *.pyc
 .env
 .pytest_cache/
+
+data/processed/*.mp4
+data/processed/*.gif

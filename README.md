@@ -54,7 +54,10 @@ Video -> cv_service -> Kafka topic (equipment.events) -> analytics_service -> Po
 
 ```bash
 make install
+make data
 make test
+# after running stack for a while
+make demo
 ```
 
 Equivalent without Make:
@@ -64,6 +67,13 @@ python -m pip install --upgrade pip
 pip install -r requirements.txt
 pytest -q
 ```
+
+
+### Open-source data used
+
+- Source manifest: `data/metadata/open_source_video_sources.csv`
+- Downloader: `python scripts/download_open_source_data.py` (or `make data`)
+- CV service auto-selects first local clip from `data/raw_videos/` when `VIDEO_SOURCE` is empty.
 
 ### 2) Full stack with Docker Compose
 
@@ -96,6 +106,17 @@ docker compose down -v
 
 This script starts the stack, waits briefly, prints service status, and shows recent logs for `cv_service`, `analytics_service`, and `ui_service`.
 
+
+### CV model configuration
+
+By default the CV service uses a YOLO model backend (`CV_MODEL_BACKEND=yolo`).
+If model loading is unavailable, it automatically falls back to motion-only detection.
+You can force fallback mode with:
+
+```bash
+CV_MODEL_BACKEND=motion
+```
+
 ## Service responsibilities
 
 ### `services/cv_service`
@@ -112,7 +133,8 @@ This script starts the stack, waits briefly, prints service status, and shows re
 
 ### `services/ui_service`
 - Pulls latest rows from PostgreSQL
-- Renders utilization dashboard in Streamlit
+- Shows processed latest frame with bounding boxes
+- Displays live machine state/activity and utilization dashboard in Streamlit
 
 ## Kafka payload schema (example)
 
@@ -121,7 +143,8 @@ This script starts the stack, waits briefly, prints service status, and shows re
   "frame_id": 450,
   "equipment_id": "EX-001",
   "equipment_class": "excavator",
-  "timestamp": 15.0,
+  "timestamp": "00:00:15.000",
+  "timestamp_sec": 15.0,
   "utilization": {
     "current_state": "ACTIVE",
     "current_activity": "DIGGING",
@@ -176,8 +199,41 @@ If you present this today, describe it as **Phase-1 foundation complete** with *
 - Add design doc with tradeoffs and assumptions
 - Record short demo video/GIF + finalize README
 
+
+## CV implementation confirmation
+
+Yes, computer vision is implemented in this prototype using OpenCV-based detection/tracking/motion analysis.
+See `docs/cv_implementation.md` for exact methods and current limitations.
+
 ## Notes for interview presentation
 
 - Position this as a **scaled production-style prototype**.
 - Be explicit that activity labels are rule-based in v1 and can be replaced with a temporal classifier in v2.
 - Emphasize articulated-motion handling as the key requirement solved.
+
+
+## Demo artifact
+
+Record a 30-60s GIF/video after running the stack to satisfy submission requirements.
+Suggested flow: start stack, let CV process frames, open dashboard, and capture updates to state/activity/utilization.
+
+
+## Requirement alignment checklist
+
+See `docs/alignment_checklist.md` for a requirement-by-requirement pass/partial assessment and data guidance.
+
+
+## Demo GIF export
+
+After running the pipeline and generating `data/processed/processed_output.mp4`, export a GIF with:
+
+```bash
+python scripts/export_demo_gif.py
+# or
+make demo
+```
+
+
+## Model/data clarification
+
+See `docs/model_data_faq.md` for a direct answer on pretrained model usage vs training on downloaded data.

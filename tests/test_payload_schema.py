@@ -6,7 +6,8 @@ def test_payload_schema_validates():
         frame_id=1,
         equipment_id="EX-001",
         equipment_class="excavator",
-        timestamp=0.5,
+        timestamp="00:00:00.500",
+        timestamp_sec=0.5,
         utilization=UtilizationBlock(
             current_state="ACTIVE",
             current_activity="DIGGING",

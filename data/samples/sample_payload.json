@@ -2,7 +2,8 @@
   "frame_id": 450,
   "equipment_id": "EX-001",
   "equipment_class": "excavator",
-  "timestamp": 15.0,
+  "timestamp": "00:00:15.000",
+  "timestamp_sec": 15.0,
   "utilization": {
     "current_state": "ACTIVE",
     "current_activity": "DIGGING",

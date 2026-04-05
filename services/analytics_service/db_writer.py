@@ -28,7 +28,7 @@ class DbWriter:
                     "frame_id": event["frame_id"],
                     "equipment_id": event["equipment_id"],
                     "equipment_class": event["equipment_class"],
-                    "timestamp_sec": event["timestamp"],
+                    "timestamp_sec": event.get("timestamp_sec", 0.0),
                     "current_state": util["current_state"],
                     "current_activity": util["current_activity"],
                     "motion_source": util["motion_source"],
