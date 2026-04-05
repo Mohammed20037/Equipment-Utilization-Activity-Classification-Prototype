@@ -1,0 +1,2 @@
+name,source_url,license,notes
+opencv_vtest,https://raw.githubusercontent.com/opencv/opencv/master/samples/data/vtest.avi,BSD-3-Clause (OpenCV sample data),Fallback public sample for pipeline smoke testing
