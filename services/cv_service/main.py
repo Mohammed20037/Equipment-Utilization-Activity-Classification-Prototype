@@ -1,4 +1,5 @@
 import os
+import socket
 import time
 from datetime import timedelta
 from pathlib import Path
@@ -17,17 +18,34 @@ def build_producer() -> Producer:
     return Producer({"bootstrap.servers": os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")})
 
 
+def wait_for_kafka(bootstrap_servers: str, timeout_sec: int = 60) -> None:
+    deadline = time.time() + timeout_sec
+    host_port = bootstrap_servers.split(",")[0].strip()
+    host, port = host_port.split(":") if ":" in host_port else (host_port, "9092")
+
+    while time.time() < deadline:
+        try:
+            with socket.create_connection((host, int(port)), timeout=2):
+                return
+        except OSError:
+            time.sleep(1)
+    raise RuntimeError(f"Kafka broker not reachable at {bootstrap_servers} after {timeout_sec}s")
 
 
 def resolve_video_source(video_path: str) -> str:
     if video_path:
-        return video_path
+        candidate = Path(video_path)
+        if candidate.exists():
+            return str(candidate)
+
     raw_dir = Path("data/raw_videos")
     for ext in ("*.mp4", "*.avi", "*.mov", "*.mkv"):
         matches = sorted(raw_dir.glob(ext))
         if matches:
             return str(matches[0])
+
     return ""
+
 
 def format_ts(seconds: float) -> str:
     millis = int((seconds - int(seconds)) * 1000)
@@ -52,6 +70,9 @@ def annotate_frame(frame, track_id, bbox, state, activity):
 
 def main() -> None:
     topic = os.getenv("KAFKA_TOPIC", "equipment.events")
+    bootstrap_servers = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
+    wait_for_kafka(bootstrap_servers, timeout_sec=int(os.getenv("KAFKA_WAIT_TIMEOUT_SEC", "60")))
+
     video_path = resolve_video_source(os.getenv("VIDEO_SOURCE", ""))
     fps_fallback = float(os.getenv("FRAME_RATE_FALLBACK", "10"))
     output_frame_path = Path(os.getenv("OUTPUT_FRAME_PATH", "data/processed/latest.jpg"))
@@ -64,13 +85,18 @@ def main() -> None:
     motion = MotionAnalyzer(
         full_body_threshold=float(os.getenv("FULL_BODY_THRESHOLD", "3.0")),
         articulated_threshold=float(os.getenv("ARM_THRESHOLD", "6.0")),
+        mode=os.getenv("MOTION_ANALYSIS_MODE", "optical_flow_yolo"),
+        temporal_window=int(os.getenv("MOTION_TEMPORAL_WINDOW", "16")),
     )
     activity = ActivityClassifier()
     payload_builder = PayloadBuilder()
 
     cap = cv2.VideoCapture(video_path) if video_path else cv2.VideoCapture(0)
     if not cap.isOpened():
-        raise RuntimeError("Unable to open video source. Set VIDEO_SOURCE or place video in data/raw_videos/")
+        raise RuntimeError(
+            "Unable to open video source. Set VIDEO_SOURCE to a short fixed-camera clip "
+            "or place video in data/raw_videos/."
+        )
 
     fps = cap.get(cv2.CAP_PROP_FPS)
     if not fps or fps <= 1:
@@ -100,6 +126,16 @@ def main() -> None:
         tracks = tracker.update(detections)
 
         cv2.putText(frame, f"detector={detector.backend}", (8, 22), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 2, cv2.LINE_AA)
+        cv2.putText(
+            frame,
+            f"motion={motion.mode}",
+            (8, 46),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.6,
+            (255, 255, 0),
+            2,
+            cv2.LINE_AA,
+        )
 
         for tr in tracks:
             motion_result = motion.analyze(frame, tr.track_id, tr.bbox)
