@@ -178,6 +178,12 @@ If you present this today, describe it as **Phase-1 foundation complete** with *
 - Add design doc with tradeoffs and assumptions
 - Record short demo video/GIF + finalize README
 
+
+## CV implementation confirmation
+
+Yes, computer vision is implemented in this prototype using OpenCV-based detection/tracking/motion analysis.
+See `docs/cv_implementation.md` for exact methods and current limitations.
+
 ## Notes for interview presentation
 
 - Position this as a **scaled production-style prototype**.
