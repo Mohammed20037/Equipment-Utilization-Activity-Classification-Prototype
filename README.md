@@ -107,6 +107,18 @@ docker compose down -v
 This script starts the stack, waits briefly, prints service status, and shows recent logs for `cv_service`, `analytics_service`, and `ui_service`.
 
 
+
+### Startup troubleshooting (Kafka + video source)
+
+- Kafka now waits for healthy Zookeeper in Compose, and CV waits for Kafka broker reachability before producing events.
+- CV requires a valid video input. For container runs, prefer a short fixed-camera clip in `data/raw_videos/` or set `VIDEO_SOURCE` to a mounted file.
+- Select motion pipeline with `MOTION_ANALYSIS_MODE`:
+  - `optical_flow_yolo` (default)
+  - `c3d_yolo`
+  - `lstm_yolo`
+
+This helps produce reliable utilization events and downtime metrics (`current_stop_seconds`, `last_stop_seconds`, `total_downtime_seconds`).
+
 ### CV model configuration
 
 By default the CV service uses a YOLO model backend (`CV_MODEL_BACKEND=yolo`).

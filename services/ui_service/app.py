@@ -19,7 +19,8 @@ engine = get_engine()
 summary_query = text(
     """
     SELECT equipment_id, equipment_class, total_tracked_seconds,
-           total_active_seconds, total_idle_seconds, utilization_percent,
+           total_active_seconds, total_idle_seconds, total_downtime_seconds,
+           current_stop_seconds, last_stop_seconds, stop_count, utilization_percent,
            last_activity, last_state, updated_at
     FROM equipment_summary
     ORDER BY updated_at DESC
@@ -28,7 +29,8 @@ summary_query = text(
 
 recent_events_query = text(
     """
-    SELECT equipment_id, timestamp_sec, utilization_percent, current_state, current_activity
+    SELECT equipment_id, timestamp_sec, utilization_percent, current_state, current_activity,
+           total_downtime_seconds, current_stop_seconds
     FROM frame_events
     ORDER BY id DESC
     LIMIT 500
@@ -52,10 +54,17 @@ with col_status:
     if summary_rows:
         status_df = pd.DataFrame(summary_rows, columns=[
             "equipment_id", "equipment_class", "total_tracked_seconds",
-            "total_active_seconds", "total_idle_seconds", "utilization_percent",
+            "total_active_seconds", "total_idle_seconds", "total_downtime_seconds",
+            "current_stop_seconds", "last_stop_seconds", "stop_count", "utilization_percent",
             "last_activity", "last_state", "updated_at"
         ])
-        st.dataframe(status_df[["equipment_id", "equipment_class", "last_state", "last_activity", "utilization_percent"]], use_container_width=True)
+        st.dataframe(
+            status_df[[
+                "equipment_id", "equipment_class", "last_state", "last_activity",
+                "current_stop_seconds", "total_downtime_seconds", "utilization_percent"
+            ]],
+            use_container_width=True,
+        )
     else:
         st.info("No machine status available yet.")
 
@@ -64,21 +73,39 @@ if not summary_rows:
 else:
     summary_df = pd.DataFrame(summary_rows, columns=[
         "equipment_id", "equipment_class", "total_tracked_seconds",
-        "total_active_seconds", "total_idle_seconds", "utilization_percent",
+        "total_active_seconds", "total_idle_seconds", "total_downtime_seconds",
+        "current_stop_seconds", "last_stop_seconds", "stop_count", "utilization_percent",
         "last_activity", "last_state", "updated_at"
     ])
 
     c1, c2, c3 = st.columns(3)
     c1.metric("Tracked machines", int(summary_df.shape[0]))
     c2.metric("Avg utilization %", round(float(summary_df["utilization_percent"].mean()), 2))
-    c3.metric("Max utilization %", round(float(summary_df["utilization_percent"].max()), 2))
+    c3.metric("Fleet downtime (s)", round(float(summary_df["total_downtime_seconds"].sum()), 2))
 
-    st.subheader("Utilization Dashboard")
-    st.dataframe(summary_df[["equipment_id", "total_active_seconds", "total_idle_seconds", "utilization_percent"]], use_container_width=True)
-    st.bar_chart(summary_df.set_index("equipment_id")["utilization_percent"])
+    st.subheader("Utilization & Downtime Dashboard")
+    st.dataframe(
+        summary_df[[
+            "equipment_id",
+            "total_active_seconds",
+            "total_idle_seconds",
+            "total_downtime_seconds",
+            "last_stop_seconds",
+            "stop_count",
+            "utilization_percent",
+        ]],
+        use_container_width=True,
+    )
+    st.bar_chart(summary_df.set_index("equipment_id")[["utilization_percent", "total_downtime_seconds"]])
 
     if event_rows:
-        events_df = pd.DataFrame(event_rows, columns=["equipment_id", "timestamp_sec", "utilization_percent", "current_state", "current_activity"])
+        events_df = pd.DataFrame(
+            event_rows,
+            columns=[
+                "equipment_id", "timestamp_sec", "utilization_percent", "current_state",
+                "current_activity", "total_downtime_seconds", "current_stop_seconds"
+            ],
+        )
         events_df = events_df.sort_values("timestamp_sec")
         st.subheader("Recent Utilization Trend")
         st.line_chart(events_df, x="timestamp_sec", y="utilization_percent", color="equipment_id")
