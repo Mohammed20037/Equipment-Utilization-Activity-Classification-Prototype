@@ -206,3 +206,8 @@ See `docs/cv_implementation.md` for exact methods and current limitations.
 
 Record a 30-60s GIF/video after running the stack to satisfy submission requirements.
 Suggested flow: start stack, let CV process frames, open dashboard, and capture updates to state/activity/utilization.
+
+
+## Requirement alignment checklist
+
+See `docs/alignment_checklist.md` for a requirement-by-requirement pass/partial assessment and data guidance.
