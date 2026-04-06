@@ -51,7 +51,7 @@ col_video, col_status = st.columns([3, 2])
 with col_video:
     st.subheader("Processed Video Feed (latest frame)")
     if frame_path.exists():
-        st.image(str(frame_path), channels="BGR", use_container_width=True)
+        st.image(str(frame_path), channels="BGR", use_column_width=True)
     else:
         st.info("No processed frame yet. Start cv_service.")
 
