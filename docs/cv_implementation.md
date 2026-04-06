@@ -1,22 +1,61 @@
 # Computer Vision Implementation Notes
 
-## Did we use computer vision?
-Yes. The prototype uses CV in `cv_service` with two detector modes:
+## Segmentation-guided pipeline (current)
 
-1. **Model-based mode (default)**
-   - `HybridDetector` loads a YOLO model (`ultralytics`, default `yolov8n.pt`)
-   - Produces class-labeled detections and bounding boxes
-2. **Fallback mode**
-   - OpenCV foreground motion detection (MOG2 + contours) when model is unavailable
+The CV service now runs a production-style staged pipeline:
 
-Tracking and inference stack:
-- **Object tracking** (`CentroidTracker`) for persistent machine IDs
-- **Articulated motion handling** (`MotionAnalyzer`):
-  - full-body motion via bbox center displacement
-  - arm-only proxy motion via ROI frame differencing
-  - ACTIVE if either body or articulated motion crosses threshold
-- **Activity classification** (`ActivityClassifier`):
-  - `DIGGING`, `SWINGING_LOADING`, `DUMPING`, `WAITING`
+1. detection (`HybridDetector`)
+2. strict worksite acceptance (allowed class + include ROI + exclude ROI)
+3. optional segmentation enrichment (`ENABLE_SEGMENTATION`)
+4. mask-guided motion analysis (`MotionAnalyzer`)
+5. articulated-aware ACTIVE/INACTIVE
+6. equipment-specific activity classification
+7. KPI emission only for accepted tracks
 
-## Interview framing
-This satisfies the requirement to use CV and a CV model while still remaining robust in restricted environments (fallback mode).
+## Segmentation backend
+
+- Default backend: `yolov8_seg` using `ultralytics` with `yolov8n-seg.pt`
+- Weights are auto-fetched by Ultralytics (no manual dataset download required)
+- Config:
+  - `ENABLE_SEGMENTATION=1|0`
+  - `SEGMENTATION_BACKEND=yolov8_seg`
+  - `SEGMENTATION_MODEL_PATH=yolov8n-seg.pt`
+  - `SEGMENTATION_CONFIDENCE_THRESHOLD=0.25`
+- If backend init fails, service logs warning and falls back to detection-only mode
+
+## Motion and articulated logic
+
+Primary motion score is computed from optical flow on mask pixels (not full bbox).
+
+Outputs:
+- `full_body_score`
+- `articulated_score` (productive/local region proxy)
+- `productive_score` (temporally smoothed)
+- `mask_motion_density` / `persistence_score`
+
+Articulated classes can become `ACTIVE` via local productive motion even if chassis/body movement is low.
+
+Approximation used when part-level segmentation is not available:
+- top-right mask region ~ arm/bucket/tool proxy
+- bottom-left mask region ~ body/chassis proxy
+
+## Class support policy
+
+This project does **not** overclaim class coverage. Baseline support depends on detector model labels.
+
+- Configure supported classes via `ALLOWED_CLASSES`
+- Optional class aliasing via `CLASS_NAME_MAP` (example: `car:truck`)
+- Only accepted classes are tracked/emitted to business KPI path
+
+## UI behavior
+
+- Main frame and KPI path show accepted worksite tracks only
+- Rejected detections are hidden by default
+- Debug overlays are enabled only when `DEBUG_OVERLAY=1`
+
+## Validation outputs
+
+For short-clip comparisons:
+- `data/processed/equipment_timeline.csv`: state/activity/stop timeline
+- `data/processed/validation_counts.csv`: accepted/rejected/tracked counts per frame
+- `python scripts/validate_short_clip.py` prints utilization + transitions + counts summary

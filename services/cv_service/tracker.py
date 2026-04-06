@@ -15,6 +15,7 @@ class Track:
     lost_frames: int = 0
     hit_streak: int = 1
     appearance_hist: Optional[np.ndarray] = None
+    mask: Optional[np.ndarray] = None
 
 
 class CentroidTracker:
@@ -24,11 +25,13 @@ class CentroidTracker:
         max_age: int = 30,
         iou_match_threshold: float = 0.4,
         min_track_hits: int = 3,
+        duplicate_iou_threshold: float = 0.75,
     ):
         self.max_distance = max_distance
         self.max_age = max_age
         self.iou_match_threshold = iou_match_threshold
         self.min_track_hits = min_track_hits
+        self.duplicate_iou_threshold = duplicate_iou_threshold
         self.next_id = 1
         self.tracks: Dict[str, Track] = {}
 
@@ -52,7 +55,7 @@ class CentroidTracker:
         return inter / float(area_a + area_b - inter)
 
     @staticmethod
-    def _appearance_hist(frame: np.ndarray, bbox: Tuple[int, int, int, int]) -> Optional[np.ndarray]:
+    def _appearance_hist(frame: np.ndarray, bbox: Tuple[int, int, int, int], mask: Optional[np.ndarray]) -> Optional[np.ndarray]:
         x1, y1, x2, y2 = bbox
         x1 = max(0, x1)
         y1 = max(0, y1)
@@ -62,7 +65,10 @@ class CentroidTracker:
             return None
         roi = frame[y1:y2, x1:x2]
         hsv = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
-        hist = cv2.calcHist([hsv], [0, 1], None, [16, 16], [0, 180, 0, 256])
+        roi_mask = None
+        if mask is not None:
+            roi_mask = (mask[y1:y2, x1:x2] > 0).astype(np.uint8) * 255
+        hist = cv2.calcHist([hsv], [0, 1], roi_mask, [16, 16], [0, 180, 0, 256])
         cv2.normalize(hist, hist, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX)
         return hist
 
@@ -72,10 +78,44 @@ class CentroidTracker:
             return 1.0
         return float(cv2.compareHist(a, b, cv2.HISTCMP_BHATTACHARYYA))
 
+    @staticmethod
+    def _mask_iou(mask_a: Optional[np.ndarray], mask_b: Optional[np.ndarray]) -> float:
+        if mask_a is None or mask_b is None:
+            return 0.0
+        inter = np.logical_and(mask_a > 0, mask_b > 0).sum()
+        if inter <= 0:
+            return 0.0
+        union = np.logical_or(mask_a > 0, mask_b > 0).sum()
+        return float(inter / max(union, 1))
+
     def _create_track(self, det: Detection, frame: np.ndarray) -> Track:
         tid = f"EQ-{self.next_id:03d}"
         self.next_id += 1
-        return Track(track_id=tid, bbox=det.bbox, label=det.label, appearance_hist=self._appearance_hist(frame, det.bbox))
+        return Track(
+            track_id=tid,
+            bbox=det.bbox,
+            label=det.label,
+            appearance_hist=self._appearance_hist(frame, det.bbox, det.mask),
+            mask=det.mask,
+        )
+
+    def _suppress_duplicate_tracks(self) -> None:
+        keys = list(self.tracks.keys())
+        to_remove = set()
+        for i in range(len(keys)):
+            for j in range(i + 1, len(keys)):
+                ta = self.tracks[keys[i]]
+                tb = self.tracks[keys[j]]
+                if ta.label != tb.label:
+                    continue
+                iou = self._iou(ta.bbox, tb.bbox)
+                if iou < self.duplicate_iou_threshold:
+                    continue
+                keep = ta if (ta.hit_streak, -ta.lost_frames) >= (tb.hit_streak, -tb.lost_frames) else tb
+                drop = tb if keep is ta else ta
+                to_remove.add(drop.track_id)
+        for tid in to_remove:
+            self.tracks.pop(tid, None)
 
     def update(self, frame: np.ndarray, detections: List[Detection]) -> List[Track]:
         if not self.tracks:
@@ -87,7 +127,7 @@ class CentroidTracker:
         unmatched_tracks = set(self.tracks.keys())
         for det in detections:
             det_center = self._center(det.bbox)
-            det_hist = self._appearance_hist(frame, det.bbox)
+            det_hist = self._appearance_hist(frame, det.bbox, det.mask)
 
             best_track_id = None
             best_score = 1e9
@@ -106,9 +146,10 @@ class CentroidTracker:
                     continue
 
                 hist_dist = self._hist_distance(det_hist, tr.appearance_hist)
+                mask_overlap = self._mask_iou(det.mask, tr.mask)
                 lost_penalty = min(1.0, tr.lost_frames / max(1.0, self.max_age))
 
-                score = center_dist * 0.45 + (1.0 - iou) * 35.0 + hist_dist * 20.0 + lost_penalty * 10.0
+                score = center_dist * 0.42 + (1.0 - iou) * 32.0 + hist_dist * 18.0 + (1.0 - mask_overlap) * 15.0 + lost_penalty * 10.0
                 if score < best_score:
                     best_score = score
                     best_track_id = tid
@@ -119,6 +160,7 @@ class CentroidTracker:
                 track.lost_frames = 0
                 track.hit_streak += 1
                 track.appearance_hist = det_hist
+                track.mask = det.mask
                 unmatched_tracks.discard(best_track_id)
             else:
                 tr = self._create_track(det, frame)
@@ -130,4 +172,5 @@ class CentroidTracker:
                 if self.tracks[tid].lost_frames > self.max_age:
                     del self.tracks[tid]
 
+        self._suppress_duplicate_tracks()
         return list(self.tracks.values())

@@ -1,6 +1,6 @@
 from collections import defaultdict, deque
 from dataclasses import dataclass
-from typing import Deque, Dict, Tuple
+from typing import Deque, Dict, Optional, Tuple
 
 import cv2
 import numpy as np
@@ -13,24 +13,26 @@ class MotionResult:
     full_body_score: float
     articulated_score: float
     productive_score: float
+    mask_motion_density: float
+    persistence_score: float
 
 
 class MotionAnalyzer:
     """
-    Motion analyzer with selectable algorithms that can be combined with YOLO detections.
-
-    Supported modes:
-      - optical_flow_yolo: dense optical flow + articulated/chassis decomposition
-      - c3d_yolo: lightweight C3D-style temporal energy over a short clip window
-      - lstm_yolo: temporal memory score over recent motion observations
+    Segmentation-guided motion analysis with articulated-motion-aware ACTIVE inference.
+    Primary motion is computed on mask pixels; full-box motion is used only as fallback.
     """
+
+    ARTICULATED_CLASSES = {
+        "excavator", "loader", "backhoe loader", "crane", "telehandler", "bulldozer", "skid steer loader"
+    }
 
     def __init__(
         self,
         full_body_threshold: float = 3.0,
         articulated_threshold: float = 6.0,
         productive_threshold: float = 4.0,
-        mode: str = "optical_flow_yolo",
+        mode: str = "optical_flow_masked",
         temporal_window: int = 16,
     ):
         self.full_body_threshold = full_body_threshold
@@ -39,15 +41,9 @@ class MotionAnalyzer:
         self.mode = mode.lower()
         self.temporal_window = max(4, temporal_window)
 
-        self.prev_gray = None
-        self.prev_centers: Dict[str, Tuple[float, float]] = {}
-        self.track_gray_clips: Dict[str, Deque[np.ndarray]] = defaultdict(lambda: deque(maxlen=self.temporal_window))
+        self.prev_gray: Optional[np.ndarray] = None
         self.track_motion_history: Dict[str, Deque[float]] = defaultdict(lambda: deque(maxlen=self.temporal_window))
-
-    @staticmethod
-    def _center(bbox):
-        x1, y1, x2, y2 = bbox
-        return ((x1 + x2) / 2, (y1 + y2) / 2)
+        self.track_density_history: Dict[str, Deque[float]] = defaultdict(lambda: deque(maxlen=self.temporal_window))
 
     @staticmethod
     def _clip_bbox(gray: np.ndarray, bbox) -> Tuple[int, int, int, int]:
@@ -58,10 +54,22 @@ class MotionAnalyzer:
         y2 = min(gray.shape[0], y2)
         return x1, y1, x2, y2
 
-    def _compute_flow_scores(self, roi_prev: np.ndarray, roi_now: np.ndarray) -> Tuple[float, float, float]:
-        if roi_prev.size == 0 or roi_now.size == 0:
-            return 0.0, 0.0, 0.0
+    @staticmethod
+    def _weighted_temporal_average(values: Deque[float]) -> float:
+        if not values:
+            return 0.0
+        arr = np.asarray(values, dtype=np.float32)
+        weights = np.exp(np.linspace(-1.2, 0.0, len(arr))).astype(np.float32)
+        weights = weights / np.sum(weights)
+        return float(np.dot(arr, weights))
 
+    def _compute_masked_flow(
+        self,
+        roi_prev: np.ndarray,
+        roi_now: np.ndarray,
+        roi_mask: Optional[np.ndarray],
+        equipment_class: str,
+    ) -> Tuple[float, float, float, float]:
         flow = cv2.calcOpticalFlowFarneback(
             roi_prev,
             roi_now,
@@ -75,81 +83,94 @@ class MotionAnalyzer:
             flags=0,
         )
         mag, _ = cv2.cartToPolar(flow[..., 0], flow[..., 1])
-        full_body_score = float(np.mean(mag))
 
-        h, w = roi_now.shape[:2]
-        arm_roi = mag[: max(1, h // 2), max(0, w // 2):]
-        chassis_roi = mag[max(0, h // 2):, : max(1, w // 2)]
-        articulated_score = float(np.mean(arm_roi)) if arm_roi.size else 0.0
-        chassis_score = float(np.mean(chassis_roi)) if chassis_roi.size else 0.0
+        if roi_mask is None or roi_mask.size == 0:
+            active_pixels = np.ones_like(mag, dtype=bool)
+        else:
+            active_pixels = roi_mask > 0
+            if not np.any(active_pixels):
+                active_pixels = np.ones_like(mag, dtype=bool)
 
-        # Productive-motion proxy for fixed-camera equipment clips:
-        # emphasize articulated motion and discount purely translational/chassis drift.
-        productive_score = max(articulated_score, full_body_score - (0.55 * chassis_score))
-        return full_body_score, articulated_score, productive_score
+        masked_mag = mag[active_pixels]
+        full_body = float(np.mean(masked_mag)) if masked_mag.size else 0.0
+        motion_density = float(np.mean(masked_mag > max(0.8, self.full_body_threshold * 0.2))) if masked_mag.size else 0.0
 
-    def _c3d_style_score(self, clip: Deque[np.ndarray]) -> float:
-        if len(clip) < 3:
-            return 0.0
-        energies = []
-        frames = list(clip)
-        for i in range(1, len(frames)):
-            diff = cv2.absdiff(frames[i], frames[i - 1])
-            energies.append(float(np.mean(diff)))
-        return float(np.mean(energies)) if energies else 0.0
+        h, w = mag.shape
+        top = slice(0, max(1, h // 2))
+        bottom = slice(max(0, h // 2), h)
+        right = slice(max(0, w // 2), w)
+        left = slice(0, max(1, w // 2))
 
-    def _lstm_style_score(self, history: Deque[float]) -> float:
-        if not history:
-            return 0.0
-        values = np.array(history, dtype=np.float32)
-        weights = np.exp(np.linspace(-1.5, 0.0, num=len(values))).astype(np.float32)
-        weights = weights / np.sum(weights)
-        return float(np.dot(values, weights))
+        productive_region = mag[top, right]
+        body_region = mag[bottom, left]
 
-    def analyze(self, frame: np.ndarray, track_id: str, bbox) -> MotionResult:
+        if roi_mask is not None and roi_mask.size > 0:
+            productive_mask = roi_mask[top, right] > 0
+            body_mask = roi_mask[bottom, left] > 0
+            productive_region = productive_region[productive_mask] if np.any(productive_mask) else productive_region
+            body_region = body_region[body_mask] if np.any(body_mask) else body_region
+
+        productive_local = float(np.mean(productive_region)) if productive_region.size else 0.0
+        body_local = float(np.mean(body_region)) if body_region.size else 0.0
+
+        if equipment_class in self.ARTICULATED_CLASSES:
+            articulated = productive_local
+            productive = max(productive_local, full_body - 0.45 * body_local)
+        else:
+            articulated = 0.5 * productive_local
+            productive = max(full_body, productive_local * 0.8)
+
+        return full_body, articulated, productive, motion_density
+
+    def analyze(self, frame: np.ndarray, track_id: str, bbox, mask: Optional[np.ndarray], equipment_class: str) -> MotionResult:
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        center = self._center(bbox)
+        x1, y1, x2, y2 = self._clip_bbox(gray, bbox)
 
-        center_shift = 0.0
-        if track_id in self.prev_centers:
-            px, py = self.prev_centers[track_id]
-            center_shift = float(((center[0] - px) ** 2 + (center[1] - py) ** 2) ** 0.5)
-        self.prev_centers[track_id] = center
-
-        full_body_score = center_shift
+        full_body_score = 0.0
         articulated_score = 0.0
         productive_score = 0.0
+        density = 0.0
         motion_source = "stationary"
 
-        x1, y1, x2, y2 = self._clip_bbox(gray, bbox)
         if self.prev_gray is not None and x2 > x1 and y2 > y1:
             roi_now = gray[y1:y2, x1:x2]
             roi_prev = self.prev_gray[y1:y2, x1:x2]
+            roi_mask = None
+            if mask is not None:
+                roi_mask = (mask[y1:y2, x1:x2] > 0).astype(np.uint8)
 
-            flow_full, flow_articulated, flow_productive = self._compute_flow_scores(roi_prev, roi_now)
-            self.track_motion_history[track_id].append(flow_productive)
-            self.track_gray_clips[track_id].append(roi_now)
+            full_body_score, articulated_score, productive_score, density = self._compute_masked_flow(
+                roi_prev=roi_prev,
+                roi_now=roi_now,
+                roi_mask=roi_mask,
+                equipment_class=equipment_class,
+            )
+            motion_source = "masked_optical_flow"
 
-            if self.mode == "c3d_yolo":
-                full_body_score = self._c3d_style_score(self.track_gray_clips[track_id])
-                articulated_score = flow_articulated
-                productive_score = max(flow_productive, full_body_score)
-                motion_source = "c3d_yolo"
-            elif self.mode == "lstm_yolo":
-                full_body_score = self._lstm_style_score(self.track_motion_history[track_id])
-                articulated_score = flow_articulated
-                productive_score = max(flow_productive, full_body_score)
-                motion_source = "lstm_yolo"
-            else:
-                full_body_score = max(center_shift, flow_full)
-                articulated_score = flow_articulated
-                productive_score = max(flow_productive, full_body_score)
-                motion_source = "optical_flow_yolo"
-
+        self.track_motion_history[track_id].append(productive_score)
+        self.track_density_history[track_id].append(density)
+        smooth_productive = self._weighted_temporal_average(self.track_motion_history[track_id])
+        persistence = self._weighted_temporal_average(self.track_density_history[track_id])
         self.prev_gray = gray
 
-        if productive_score >= self.productive_threshold:
-            return MotionResult("ACTIVE", motion_source, full_body_score, articulated_score, productive_score)
-        if full_body_score >= self.full_body_threshold or articulated_score >= self.articulated_threshold:
-            return MotionResult("ACTIVE", f"{motion_source}_weak", full_body_score, articulated_score, productive_score)
-        return MotionResult("INACTIVE", "stationary", full_body_score, articulated_score, productive_score)
+        is_articulated_class = equipment_class in self.ARTICULATED_CLASSES
+        active_by_productive = smooth_productive >= self.productive_threshold
+        active_by_articulated = is_articulated_class and articulated_score >= self.articulated_threshold * 0.75 and persistence >= 0.08
+        active_by_body = full_body_score >= self.full_body_threshold and persistence >= 0.05
+
+        if active_by_productive or active_by_articulated or active_by_body:
+            state = "ACTIVE"
+            source = motion_source if active_by_productive else f"{motion_source}_weak"
+        else:
+            state = "INACTIVE"
+            source = "stationary"
+
+        return MotionResult(
+            state=state,
+            motion_source=source,
+            full_body_score=full_body_score,
+            articulated_score=articulated_score,
+            productive_score=smooth_productive,
+            mask_motion_density=persistence,
+            persistence_score=persistence,
+        )
