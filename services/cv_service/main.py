@@ -165,9 +165,10 @@ def main() -> None:
     video_path = resolve_video_source(os.getenv("VIDEO_SOURCE", ""))
     fps_fallback = float(os.getenv("FRAME_RATE_FALLBACK", "10"))
     output_frame_path = Path(os.getenv("OUTPUT_FRAME_PATH", "data/processed/latest.jpg"))
+    output_frame_tmp_path = output_frame_path.with_name("latest.tmp.jpg")
     processed_video_path = os.getenv("PROCESSED_VIDEO_PATH", "data/processed/processed_output.mp4")
     timeline_csv = Path(os.getenv("TIMELINE_OUTPUT_CSV", "data/processed/equipment_timeline.csv"))
-    output_frame_path.parent.mkdir(parents=True, exist_ok=True)
+    os.makedirs(output_frame_path.parent, exist_ok=True)
 
     producer = build_producer()
     detector = HybridDetector()
@@ -266,7 +267,15 @@ def main() -> None:
                 producer.produce(topic, event.model_dump_json().encode("utf-8"))
                 write_timeline_row(timeline_csv, event)
 
-            cv2.imwrite(str(output_frame_path), frame)
+            try:
+                if not cv2.imwrite(str(output_frame_tmp_path), frame):
+                    logger.error("Failed to write temporary frame: %s", output_frame_tmp_path)
+                else:
+                    os.replace(output_frame_tmp_path, output_frame_path)
+            except OSError as exc:
+                logger.error("Atomic frame write failed: tmp=%s final=%s err=%s", output_frame_tmp_path, output_frame_path, exc)
+                if output_frame_tmp_path.exists():
+                    output_frame_tmp_path.unlink(missing_ok=True)
             if writer is not None and writer_size is not None:
                 out_frame = frame
                 if (frame.shape[1], frame.shape[0]) != writer_size:
