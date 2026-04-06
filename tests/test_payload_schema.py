@@ -11,12 +11,16 @@ def test_payload_schema_validates():
         utilization=UtilizationBlock(
             current_state="ACTIVE",
             current_activity="DIGGING",
-            motion_source="arm_only",
+            motion_source="optical_flow_yolo",
         ),
         time_analytics=TimeAnalyticsBlock(
             total_tracked_seconds=0.5,
             total_active_seconds=0.5,
             total_idle_seconds=0.0,
+            total_downtime_seconds=0.0,
+            current_stop_seconds=0.0,
+            last_stop_seconds=0.0,
+            stop_count=0,
             utilization_percent=100.0,
         ),
     )
