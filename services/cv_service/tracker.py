@@ -18,9 +18,17 @@ class Track:
 
 
 class CentroidTracker:
-    def __init__(self, max_distance: float = 90.0, max_lost: int = 25):
+    def __init__(
+        self,
+        max_distance: float = 90.0,
+        max_age: int = 30,
+        iou_match_threshold: float = 0.4,
+        min_track_hits: int = 3,
+    ):
         self.max_distance = max_distance
-        self.max_lost = max_lost
+        self.max_age = max_age
+        self.iou_match_threshold = iou_match_threshold
+        self.min_track_hits = min_track_hits
         self.next_id = 1
         self.tracks: Dict[str, Track] = {}
 
@@ -67,12 +75,7 @@ class CentroidTracker:
     def _create_track(self, det: Detection, frame: np.ndarray) -> Track:
         tid = f"EQ-{self.next_id:03d}"
         self.next_id += 1
-        return Track(
-            track_id=tid,
-            bbox=det.bbox,
-            label=det.label,
-            appearance_hist=self._appearance_hist(frame, det.bbox),
-        )
+        return Track(track_id=tid, bbox=det.bbox, label=det.label, appearance_hist=self._appearance_hist(frame, det.bbox))
 
     def update(self, frame: np.ndarray, detections: List[Detection]) -> List[Track]:
         if not self.tracks:
@@ -99,10 +102,13 @@ class CentroidTracker:
                     continue
 
                 iou = self._iou(det.bbox, tr.bbox)
-                hist_dist = self._hist_distance(det_hist, tr.appearance_hist)
-                lost_penalty = min(1.0, tr.lost_frames / max(1.0, self.max_lost))
+                if iou < self.iou_match_threshold and tr.lost_frames == 0:
+                    continue
 
-                score = center_dist * 0.5 + (1.0 - iou) * 30.0 + hist_dist * 20.0 + lost_penalty * 10.0
+                hist_dist = self._hist_distance(det_hist, tr.appearance_hist)
+                lost_penalty = min(1.0, tr.lost_frames / max(1.0, self.max_age))
+
+                score = center_dist * 0.45 + (1.0 - iou) * 35.0 + hist_dist * 20.0 + lost_penalty * 10.0
                 if score < best_score:
                     best_score = score
                     best_track_id = tid
@@ -121,7 +127,7 @@ class CentroidTracker:
         for tid in list(self.tracks.keys()):
             if tid in unmatched_tracks:
                 self.tracks[tid].lost_frames += 1
-                if self.tracks[tid].lost_frames > self.max_lost:
+                if self.tracks[tid].lost_frames > self.max_age:
                     del self.tracks[tid]
 
         return list(self.tracks.values())

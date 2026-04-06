@@ -17,7 +17,7 @@
 
 ## 4) Stop interval semantics
 - **Stop start**: first frame where confirmed state is `INACTIVE` after previously confirmed `ACTIVE`.
-- **Stop continuation**: every frame with confirmed `INACTIVE` increments `current_stop_seconds += delta_t`.
+- **Stop continuation**: first accumulates into a pending stop; downtime is committed only after `MIN_STOP_SECONDS` is reached (micro-stops are ignored).
 - **Stop end**: first confirmed `ACTIVE` frame after an open stop:
   - `last_stop_seconds = current_stop_seconds`
   - `stop_count += 1`

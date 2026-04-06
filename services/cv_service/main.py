@@ -174,7 +174,9 @@ def main() -> None:
     detector = HybridDetector()
     tracker = CentroidTracker(
         max_distance=float(os.getenv("TRACKER_MAX_DISTANCE", "90")),
-        max_lost=int(os.getenv("TRACKER_MAX_LOST", "25")),
+        max_age=int(os.getenv("MAX_AGE", "30")),
+        iou_match_threshold=float(os.getenv("IOU_MATCH_THRESHOLD", "0.4")),
+        min_track_hits=int(os.getenv("MIN_TRACK_HITS", "3")),
     )
     motion = MotionAnalyzer(
         full_body_threshold=float(os.getenv("FULL_BODY_THRESHOLD", "3.0")),
@@ -190,6 +192,8 @@ def main() -> None:
         inactive_frames=int(os.getenv("INACTIVE_DEBOUNCE_FRAMES", "6")),
     )
     missing_tolerance = int(os.getenv("TRACK_MISSING_TOLERANCE_FRAMES", "3"))
+    min_track_hits_for_kpi = int(os.getenv("MIN_TRACK_HITS", "3"))
+    detector_debug_overlay = os.getenv("DETECTOR_DEBUG_OVERLAY", "1") == "1"
 
     cap = cv2.VideoCapture(video_path) if video_path else cv2.VideoCapture(0)
     if not cap.isOpened():
@@ -230,11 +234,29 @@ def main() -> None:
             detections = detector.detect(frame)
             tracks = tracker.update(frame, detections)
 
+            logger.info(
+                "Frame %s stats: raw_detections=%s filtered_detections=%s tracked_objects=%s",
+                frame_id,
+                detector.last_raw_count,
+                detector.last_filtered_count,
+                len([t for t in tracks if t.hit_streak >= min_track_hits_for_kpi]),
+            )
+
             cv2.putText(frame, f"detector={detector.backend}", (8, 22), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 2, cv2.LINE_AA)
             cv2.putText(frame, f"motion={motion.mode}", (8, 46), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 2, cv2.LINE_AA)
 
+            if detector_debug_overlay:
+                for det in detections:
+                    x1, y1, x2, y2 = det.bbox
+                    cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 1)
+                for rej in detector.last_rejections:
+                    x1, y1, x2, y2 = rej.bbox
+                    cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 0, 255), 1)
+
             for tr in tracks:
                 if tr.lost_frames > missing_tolerance:
+                    continue
+                if tr.hit_streak < min_track_hits_for_kpi and tr.lost_frames == 0:
                     continue
 
                 if tr.lost_frames > 0:

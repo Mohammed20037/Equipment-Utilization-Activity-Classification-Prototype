@@ -1,3 +1,4 @@
+import os
 from dataclasses import dataclass
 from typing import Dict
 
@@ -12,11 +13,13 @@ class Totals:
     current_stop: float = 0.0
     last_stop: float = 0.0
     stop_count: int = 0
+    pending_stop: float = 0.0
 
 
 class PayloadBuilder:
     def __init__(self):
         self.totals: Dict[str, Totals] = {}
+        self.min_stop_seconds = float(os.getenv("MIN_STOP_SECONDS", "2.0"))
 
     def build(
         self,
@@ -39,9 +42,12 @@ class PayloadBuilder:
                 totals.last_stop = totals.current_stop
                 totals.stop_count += 1
                 totals.current_stop = 0.0
+            totals.pending_stop = 0.0
         else:
-            totals.idle += delta_t
-            totals.current_stop += delta_t
+            totals.pending_stop += delta_t
+            if totals.pending_stop >= self.min_stop_seconds:
+                totals.idle += delta_t
+                totals.current_stop += delta_t
 
         utilization = 100.0 * totals.active / totals.tracked if totals.tracked else 0.0
 
