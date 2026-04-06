@@ -11,6 +11,10 @@ class TimeAnalyticsBlock(BaseModel):
     total_tracked_seconds: float
     total_active_seconds: float
     total_idle_seconds: float
+    total_downtime_seconds: float
+    current_stop_seconds: float
+    last_stop_seconds: float
+    stop_count: int
     utilization_percent: float
 
 

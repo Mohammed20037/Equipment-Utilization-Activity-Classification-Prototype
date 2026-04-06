@@ -16,11 +16,15 @@ class DbWriter:
                     INSERT INTO frame_events (
                       frame_id, equipment_id, equipment_class, timestamp_sec,
                       current_state, current_activity, motion_source,
-                      total_tracked_seconds, total_active_seconds, total_idle_seconds, utilization_percent
+                      total_tracked_seconds, total_active_seconds, total_idle_seconds,
+                      total_downtime_seconds, current_stop_seconds, last_stop_seconds, stop_count,
+                      utilization_percent
                     ) VALUES (
                       :frame_id, :equipment_id, :equipment_class, :timestamp_sec,
                       :current_state, :current_activity, :motion_source,
-                      :total_tracked_seconds, :total_active_seconds, :total_idle_seconds, :utilization_percent
+                      :total_tracked_seconds, :total_active_seconds, :total_idle_seconds,
+                      :total_downtime_seconds, :current_stop_seconds, :last_stop_seconds, :stop_count,
+                      :utilization_percent
                     )
                     """
                 ),
@@ -35,6 +39,10 @@ class DbWriter:
                     "total_tracked_seconds": analytics["total_tracked_seconds"],
                     "total_active_seconds": analytics["total_active_seconds"],
                     "total_idle_seconds": analytics["total_idle_seconds"],
+                    "total_downtime_seconds": analytics["total_downtime_seconds"],
+                    "current_stop_seconds": analytics["current_stop_seconds"],
+                    "last_stop_seconds": analytics["last_stop_seconds"],
+                    "stop_count": analytics["stop_count"],
                     "utilization_percent": analytics["utilization_percent"],
                 },
             )
@@ -44,16 +52,22 @@ class DbWriter:
                     """
                     INSERT INTO equipment_summary (
                       equipment_id, equipment_class, total_tracked_seconds, total_active_seconds,
-                      total_idle_seconds, utilization_percent, last_activity, last_state
+                      total_idle_seconds, total_downtime_seconds, current_stop_seconds,
+                      last_stop_seconds, stop_count, utilization_percent, last_activity, last_state
                     ) VALUES (
                       :equipment_id, :equipment_class, :total_tracked_seconds, :total_active_seconds,
-                      :total_idle_seconds, :utilization_percent, :last_activity, :last_state
+                      :total_idle_seconds, :total_downtime_seconds, :current_stop_seconds,
+                      :last_stop_seconds, :stop_count, :utilization_percent, :last_activity, :last_state
                     )
                     ON CONFLICT (equipment_id) DO UPDATE SET
                       equipment_class = EXCLUDED.equipment_class,
                       total_tracked_seconds = EXCLUDED.total_tracked_seconds,
                       total_active_seconds = EXCLUDED.total_active_seconds,
                       total_idle_seconds = EXCLUDED.total_idle_seconds,
+                      total_downtime_seconds = EXCLUDED.total_downtime_seconds,
+                      current_stop_seconds = EXCLUDED.current_stop_seconds,
+                      last_stop_seconds = EXCLUDED.last_stop_seconds,
+                      stop_count = EXCLUDED.stop_count,
                       utilization_percent = EXCLUDED.utilization_percent,
                       last_activity = EXCLUDED.last_activity,
                       last_state = EXCLUDED.last_state,
@@ -66,6 +80,10 @@ class DbWriter:
                     "total_tracked_seconds": analytics["total_tracked_seconds"],
                     "total_active_seconds": analytics["total_active_seconds"],
                     "total_idle_seconds": analytics["total_idle_seconds"],
+                    "total_downtime_seconds": analytics["total_downtime_seconds"],
+                    "current_stop_seconds": analytics["current_stop_seconds"],
+                    "last_stop_seconds": analytics["last_stop_seconds"],
+                    "stop_count": analytics["stop_count"],
                     "utilization_percent": analytics["utilization_percent"],
                     "last_activity": util["current_activity"],
                     "last_state": util["current_state"],
