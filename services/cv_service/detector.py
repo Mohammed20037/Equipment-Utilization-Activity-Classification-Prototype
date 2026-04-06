@@ -248,7 +248,7 @@ class HybridDetector:
 
         backend = os.getenv("CV_MODEL_BACKEND", "yolo").lower()
         if backend == "yolo":
-            model_path = os.getenv("YOLO_MODEL_PATH", "yolov8n.pt")
+            model_path = self._resolve_model_path()
             conf = float(os.getenv("YOLO_CONF_THRESHOLD", "0.25"))
             try:
                 self.impl = YoloDetector(model_path=model_path, conf_threshold=conf)
@@ -259,6 +259,29 @@ class HybridDetector:
         else:
             self.impl = MotionDetector(min_area=int(os.getenv("MIN_DET_AREA", "2200")), fallback_label=os.getenv("MOTION_FALLBACK_LABEL", "excavator"))
             self.backend = "motion_fallback"
+
+    @staticmethod
+    def _resolve_model_path() -> str:
+        """Return path to the best available YOLO model.
+
+        Priority:
+          1. Explicitly set YOLO_MODEL_PATH env var
+          2. Domain-specific trained model at models/equipment_detector.pt
+          3. Default pretrained yolov8n.pt (downloaded from Ultralytics on first use)
+        """
+        import pathlib  # local import to avoid circular issues at module level
+
+        env_path = os.getenv("YOLO_MODEL_PATH", "")
+        if env_path:
+            return env_path
+
+        custom_model = pathlib.Path("models/equipment_detector.pt")
+        if custom_model.exists():
+            logger.info("Loaded custom equipment model: %s", custom_model)
+            return str(custom_model)
+
+        logger.info("No custom model found at models/equipment_detector.pt; using yolov8n.pt")
+        return "yolov8n.pt"
 
     @staticmethod
     def _bbox_center(bbox: Tuple[int, int, int, int]) -> Tuple[float, float]:

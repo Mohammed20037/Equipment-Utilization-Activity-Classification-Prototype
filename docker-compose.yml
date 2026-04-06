@@ -101,5 +101,32 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+  training_service:
+    build:
+      context: .
+      dockerfile: infra/Dockerfile.training
+    env_file:
+      - .env
+    environment:
+      # Override in .env or pass via CLI:  docker compose run training_service --model yolov8m
+      ROBOFLOW_API_KEY: ${ROBOFLOW_API_KEY:-}
+      ROBOFLOW_WORKSPACE: ${ROBOFLOW_WORKSPACE:-construction-equipment-site}
+      ROBOFLOW_PROJECT: ${ROBOFLOW_PROJECT:-construction-equipment-detection}
+      ROBOFLOW_VERSION: ${ROBOFLOW_VERSION:-1}
+      TRAINING_EPOCHS: ${TRAINING_EPOCHS:-100}
+      TRAINING_BATCH_SIZE: ${TRAINING_BATCH_SIZE:--1}
+      TRAINING_IMG_SIZE: ${TRAINING_IMG_SIZE:-640}
+      TRAINING_DEVICE: ${TRAINING_DEVICE:-}
+      TRAINING_PATIENCE: ${TRAINING_PATIENCE:-20}
+      MAX_IMAGES_PER_SOURCE: ${MAX_IMAGES_PER_SOURCE:-3000}
+    volumes:
+      - ./models:/app/models          # trained model output
+      - ./data/training:/app/data/training  # downloaded datasets (cached)
+      - ./runs:/app/runs              # TensorBoard / training logs
+    # One-shot job: exits after training completes
+    restart: "no"
+    profiles:
+      - training
+
 volumes:
   pg_data:

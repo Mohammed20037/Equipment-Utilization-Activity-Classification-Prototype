@@ -1,0 +1,56 @@
+# ── Construction Equipment Detector – Training Image ──────────────────────────
+#
+# Includes build tools required for pycocotools and all training dependencies.
+# Supports optional GPU acceleration via NVIDIA Container Toolkit.
+#
+# Build:
+#   docker build -f infra/Dockerfile.training -t equipment-training .
+#
+# Run (CPU):
+#   docker run --rm -v $(pwd)/models:/app/models -v $(pwd)/data:/app/data \
+#     -e ROBOFLOW_API_KEY=... equipment-training
+#
+# Run (GPU, requires nvidia-container-toolkit):
+#   docker run --rm --gpus all -v $(pwd)/models:/app/models \
+#     -e ROBOFLOW_API_KEY=... equipment-training
+
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# System dependencies:
+#   libgl1 / libglib2.0-0  – OpenCV
+#   gcc / g++ / python3-dev – required to compile pycocotools
+#   wget / curl             – dataset downloads
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libgl1 \
+    libglib2.0-0 \
+    gcc \
+    g++ \
+    python3-dev \
+    wget \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# ── Runtime deps (shared with other services) ─────────────────────────────────
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# ── Training-only deps ────────────────────────────────────────────────────────
+# roboflow   : Roboflow Universe dataset download
+# pycocotools: COCO annotation format support (requires gcc)
+RUN pip install --no-cache-dir \
+    "roboflow>=1.1.0" \
+    "pycocotools>=2.0.7"
+
+# ── Application code ──────────────────────────────────────────────────────────
+COPY . .
+
+ENV PYTHONPATH=/app
+ENV PYTHONUNBUFFERED=1
+
+# Pre-create output directories
+RUN mkdir -p models data/training runs/train
+
+ENTRYPOINT ["python", "train_detector.py"]
+CMD ["--model", "yolov8s", "--dataset", "open_images,coco", "--epochs", "100"]
