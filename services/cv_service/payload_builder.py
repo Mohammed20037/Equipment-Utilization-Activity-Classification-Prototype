@@ -1,3 +1,4 @@
+import os
 from dataclasses import dataclass
 from typing import Dict
 
@@ -9,11 +10,16 @@ class Totals:
     tracked: float = 0.0
     active: float = 0.0
     idle: float = 0.0
+    current_stop: float = 0.0
+    last_stop: float = 0.0
+    stop_count: int = 0
+    pending_stop: float = 0.0
 
 
 class PayloadBuilder:
     def __init__(self):
         self.totals: Dict[str, Totals] = {}
+        self.min_stop_seconds = float(os.getenv("MIN_STOP_SECONDS", "2.0"))
 
     def build(
         self,
@@ -29,10 +35,20 @@ class PayloadBuilder:
     ) -> EquipmentEvent:
         totals = self.totals.setdefault(equipment_id, Totals())
         totals.tracked += delta_t
+
         if state == "ACTIVE":
             totals.active += delta_t
+            if totals.current_stop > 0:
+                totals.last_stop = totals.current_stop
+                totals.stop_count += 1
+                totals.current_stop = 0.0
+            totals.pending_stop = 0.0
         else:
-            totals.idle += delta_t
+            totals.pending_stop += delta_t
+            if totals.pending_stop >= self.min_stop_seconds:
+                totals.idle += delta_t
+                totals.current_stop += delta_t
+
         utilization = 100.0 * totals.active / totals.tracked if totals.tracked else 0.0
 
         return EquipmentEvent(
@@ -50,6 +66,10 @@ class PayloadBuilder:
                 total_tracked_seconds=round(totals.tracked, 3),
                 total_active_seconds=round(totals.active, 3),
                 total_idle_seconds=round(totals.idle, 3),
+                total_downtime_seconds=round(totals.idle, 3),
+                current_stop_seconds=round(totals.current_stop, 3),
+                last_stop_seconds=round(totals.last_stop, 3),
+                stop_count=totals.stop_count,
                 utilization_percent=round(utilization, 2),
             ),
         )
