@@ -16,6 +16,12 @@ st.caption(f"Refresh every {refresh_sec}s (manual refresh in browser if needed).
 
 engine = get_engine()
 
+target_classes = {
+    c.strip().lower().replace("_", " ").replace("-", " ")
+    for c in os.getenv("TARGET_EQUIPMENT_CLASSES", "excavator,dump truck,loader,roller,bulldozer,truck").split(",")
+    if c.strip()
+}
+
 summary_query = text(
     """
     SELECT equipment_id, equipment_class, total_tracked_seconds,
@@ -58,6 +64,7 @@ with col_status:
             "current_stop_seconds", "last_stop_seconds", "stop_count", "utilization_percent",
             "last_activity", "last_state", "updated_at"
         ])
+        status_df = status_df[status_df["equipment_class"].str.lower().isin(target_classes)]
         st.dataframe(
             status_df[[
                 "equipment_id", "equipment_class", "last_state", "last_activity",
@@ -77,6 +84,11 @@ else:
         "current_stop_seconds", "last_stop_seconds", "stop_count", "utilization_percent",
         "last_activity", "last_state", "updated_at"
     ])
+
+    summary_df = summary_df[summary_df["equipment_class"].str.lower().isin(target_classes)]
+    if summary_df.empty:
+        st.info("No relevant equipment tracks yet (after class filtering).")
+        st.stop()
 
     c1, c2, c3 = st.columns(3)
     c1.metric("Tracked machines", int(summary_df.shape[0]))
@@ -106,6 +118,7 @@ else:
                 "current_activity", "total_downtime_seconds", "current_stop_seconds"
             ],
         )
+        events_df = events_df[events_df["equipment_id"].isin(set(summary_df["equipment_id"]))]
         events_df = events_df.sort_values("timestamp_sec")
         st.subheader("Recent Utilization Trend")
         st.line_chart(events_df, x="timestamp_sec", y="utilization_percent", color="equipment_id")

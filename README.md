@@ -119,6 +119,13 @@ This script starts the stack, waits briefly, prints service status, and shows re
 
 This helps produce reliable utilization events and downtime metrics (`current_stop_seconds`, `last_stop_seconds`, `total_downtime_seconds`).
 
+After running a short fixed-camera clip, generate per-machine stop-interval validation with:
+```bash
+python scripts/validate_short_clip.py
+```
+
+The primary path for this project scenario is `optical_flow_yolo` + YOLO detections.
+
 ### CV model configuration
 
 By default the CV service uses a YOLO model backend (`CV_MODEL_BACKEND=yolo`).
