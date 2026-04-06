@@ -15,6 +15,7 @@ class Detection:
     bbox: Tuple[int, int, int, int]
     confidence: float
     label: str = "equipment"
+    mask: Optional[np.ndarray] = None
 
 
 @dataclass
@@ -117,7 +118,13 @@ class MotionDetector:
             if area < self.min_area:
                 continue
             x, y, w, h = cv2.boundingRect(contour)
-            detections.append(Detection(bbox=(x, y, x + w, y + h), confidence=min(0.99, area / 50000.0), label=self.fallback_label))
+            detections.append(
+                Detection(
+                    bbox=(x, y, x + w, y + h),
+                    confidence=min(0.99, area / 50000.0),
+                    label=self.fallback_label,
+                )
+            )
         return detections
 
 
@@ -141,11 +148,94 @@ class YoloDetector:
         return detections
 
 
+class YoloSegmentationBackend:
+    def __init__(self, model_path: str, conf_threshold: float):
+        ultralytics_mod = importlib.import_module("ultralytics")
+        self.model = ultralytics_mod.YOLO(model_path)
+        self.conf_threshold = conf_threshold
+
+    def infer_masks(self, frame: np.ndarray) -> List[Detection]:
+        results = self.model.predict(source=frame, conf=self.conf_threshold, verbose=False)
+        segmented: List[Detection] = []
+        for result in results:
+            names = result.names
+            if result.masks is None:
+                continue
+            masks = result.masks.data.cpu().numpy()
+            for idx, box in enumerate(result.boxes):
+                cls_id = int(box.cls[0].item())
+                label = normalize_label(names.get(cls_id, str(cls_id)))
+                x1, y1, x2, y2 = [int(v) for v in box.xyxy[0].tolist()]
+                conf = float(box.conf[0].item())
+                full_mask = cv2.resize(masks[idx], (frame.shape[1], frame.shape[0]), interpolation=cv2.INTER_NEAREST)
+                binary = (full_mask > 0.5).astype(np.uint8)
+                segmented.append(Detection(bbox=(x1, y1, x2, y2), confidence=conf, label=label, mask=binary))
+        return segmented
+
+
+class SegmentationManager:
+    def __init__(self):
+        self.enabled = os.getenv("ENABLE_SEGMENTATION", "1") == "1"
+        self.backend_name = os.getenv("SEGMENTATION_BACKEND", "yolov8_seg")
+        self.conf_threshold = float(os.getenv("SEGMENTATION_CONFIDENCE_THRESHOLD", "0.25"))
+        self._warned_fallback = False
+        self.backend = None
+        self.status = "disabled"
+
+        if not self.enabled:
+            return
+
+        try:
+            if self.backend_name == "yolov8_seg":
+                model_path = os.getenv("SEGMENTATION_MODEL_PATH", "yolov8n-seg.pt")
+                self.backend = YoloSegmentationBackend(model_path=model_path, conf_threshold=self.conf_threshold)
+                self.status = "enabled"
+            else:
+                logger.warning("Unknown SEGMENTATION_BACKEND=%s. Falling back to detection-only mode.", self.backend_name)
+                self.status = "unavailable"
+        except Exception as exc:
+            logger.warning("Segmentation backend init failed (%s). Falling back to detection-only mode.", exc)
+            self.status = "unavailable"
+
+    def enrich(self, frame: np.ndarray, detections: List[Detection]) -> List[Detection]:
+        if not detections or self.backend is None:
+            if self.enabled and self.status != "enabled" and not self._warned_fallback:
+                logger.warning("Segmentation unavailable; running detection-only mode.")
+                self._warned_fallback = True
+            return detections
+
+        seg_dets = self.backend.infer_masks(frame)
+        if not seg_dets:
+            return detections
+
+        enriched: List[Detection] = []
+        for det in detections:
+            best = None
+            best_iou = 0.0
+            for seg in seg_dets:
+                if seg.label != det.label:
+                    continue
+                iou = _bbox_iou(det.bbox, seg.bbox)
+                if iou > best_iou:
+                    best_iou = iou
+                    best = seg
+            if best is not None and best_iou >= 0.3:
+                enriched.append(Detection(bbox=det.bbox, confidence=det.confidence, label=det.label, mask=best.mask))
+            else:
+                enriched.append(det)
+        return enriched
+
+
 class HybridDetector:
     def __init__(self):
         self.allowlist = parse_allowlist(os.getenv("ALLOWED_CLASSES", "truck,excavator,loader"))
+        self.supported_class_map = {
+            normalize_label(k): normalize_label(v)
+            for k, v in (token.split(":", 1) for token in os.getenv("CLASS_NAME_MAP", "car:truck").split(",") if ":" in token)
+        }
         self.include_polygon = parse_polygon(os.getenv("ROI_INCLUDE_POLYGON", ""))
         self.exclude_polygon = parse_polygon(os.getenv("ROI_EXCLUDE_POLYGON", ""))
+        self.roi_min_intersection = float(os.getenv("ROI_MIN_INTERSECTION_RATIO", "0.25"))
         self.nms_iou_threshold = float(os.getenv("DET_NMS_IOU", "0.5"))
         self.min_box_area = int(os.getenv("MIN_BOX_AREA", "5000"))
         self.enable_rejection_log = os.getenv("LOG_REJECTED_DETECTIONS", "1") == "1"
@@ -153,6 +243,8 @@ class HybridDetector:
         self.last_raw_count = 0
         self.last_filtered_count = 0
         self.last_rejections: List[RejectedDetection] = []
+
+        self.segmentation = SegmentationManager()
 
         backend = os.getenv("CV_MODEL_BACKEND", "yolo").lower()
         if backend == "yolo":
@@ -187,16 +279,37 @@ class HybridDetector:
             j = i
         return inside
 
-    def _spatially_allowed(self, frame_shape, bbox: Tuple[int, int, int, int]) -> bool:
+    def _bbox_intersection_with_polygon_ratio(self, frame_shape, bbox: Tuple[int, int, int, int], polygon: Sequence[Tuple[float, float]]) -> float:
+        h, w = frame_shape[:2]
+        canvas = np.zeros((h, w), dtype=np.uint8)
+        pts = np.array([[(int(px * w), int(py * h)) for px, py in polygon]], dtype=np.int32)
+        cv2.fillPoly(canvas, pts, 1)
+
+        x1, y1, x2, y2 = bbox
+        x1, y1 = max(0, x1), max(0, y1)
+        x2, y2 = min(w, x2), min(h, y2)
+        if x2 <= x1 or y2 <= y1:
+            return 0.0
+
+        bbox_mask = np.zeros((h, w), dtype=np.uint8)
+        bbox_mask[y1:y2, x1:x2] = 1
+        intersection = np.logical_and(canvas, bbox_mask).sum()
+        box_area = max(1, (x2 - x1) * (y2 - y1))
+        return float(intersection / box_area)
+
+    def _spatial_rejection_reason(self, frame_shape, bbox: Tuple[int, int, int, int]) -> Optional[str]:
         h, w = frame_shape[:2]
         cx, cy = self._bbox_center(bbox)
         norm_point = (cx / max(w, 1), cy / max(h, 1))
 
-        if self.include_polygon and not self._point_in_polygon(norm_point, self.include_polygon):
-            return False
+        if self.include_polygon:
+            inside = self._point_in_polygon(norm_point, self.include_polygon)
+            overlap_ratio = self._bbox_intersection_with_polygon_ratio(frame_shape, bbox, self.include_polygon)
+            if not inside and overlap_ratio < self.roi_min_intersection:
+                return "outside_worksite_roi"
         if self.exclude_polygon and self._point_in_polygon(norm_point, self.exclude_polygon):
-            return False
-        return True
+            return "inside_excluded_zone"
+        return None
 
     def _reject(self, det: Detection, reason: str) -> None:
         rej = RejectedDetection(bbox=det.bbox, confidence=det.confidence, label=det.label, reason=reason)
@@ -220,12 +333,14 @@ class HybridDetector:
         filtered: List[Detection] = []
         for det in raw_detections:
             label = normalize_label(det.label)
+            label = self.supported_class_map.get(label, label)
             det = Detection(bbox=det.bbox, confidence=det.confidence, label=label)
             if label not in self.allowlist:
                 self._reject(det, "class_not_allowed")
                 continue
-            if not self._spatially_allowed(frame.shape, det.bbox):
-                self._reject(det, "outside_roi")
+            rejection_reason = self._spatial_rejection_reason(frame.shape, det.bbox)
+            if rejection_reason:
+                self._reject(det, rejection_reason)
                 continue
             x1, y1, x2, y2 = det.bbox
             if (x2 - x1) * (y2 - y1) < self.min_box_area:
@@ -235,5 +350,6 @@ class HybridDetector:
 
         filtered = nms_detections(filtered, self.nms_iou_threshold)
         filtered = remove_nested_duplicates(filtered, nested_iou_threshold=0.8)
+        filtered = self.segmentation.enrich(frame, filtered)
         self.last_filtered_count = len(filtered)
         return filtered

@@ -155,6 +155,16 @@ def write_timeline_row(csv_path: Path, event) -> None:
         ])
 
 
+def write_validation_row(csv_path: Path, frame_id: int, accepted: int, rejected: int, tracked: int) -> None:
+    csv_path.parent.mkdir(parents=True, exist_ok=True)
+    exists = csv_path.exists()
+    with csv_path.open("a", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        if not exists:
+            writer.writerow(["frame_id", "accepted_detections", "rejected_detections", "tracked_objects"])
+        writer.writerow([frame_id, accepted, rejected, tracked])
+
+
 def main() -> None:
     logging.basicConfig(level=os.getenv("CV_LOG_LEVEL", "INFO").upper(), format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
@@ -168,6 +178,7 @@ def main() -> None:
     output_frame_tmp_path = output_frame_path.with_name("latest.tmp.jpg")
     processed_video_path = os.getenv("PROCESSED_VIDEO_PATH", "data/processed/processed_output.mp4")
     timeline_csv = Path(os.getenv("TIMELINE_OUTPUT_CSV", "data/processed/equipment_timeline.csv"))
+    validation_csv = Path(os.getenv("VALIDATION_OUTPUT_CSV", "data/processed/validation_counts.csv"))
     os.makedirs(output_frame_path.parent, exist_ok=True)
 
     producer = build_producer()
@@ -182,7 +193,7 @@ def main() -> None:
         full_body_threshold=float(os.getenv("FULL_BODY_THRESHOLD", "3.0")),
         articulated_threshold=float(os.getenv("ARM_THRESHOLD", "6.0")),
         productive_threshold=float(os.getenv("PRODUCTIVE_MOTION_THRESHOLD", "4.0")),
-        mode=os.getenv("MOTION_ANALYSIS_MODE", "optical_flow_yolo"),
+        mode=os.getenv("MOTION_ANALYSIS_MODE", "optical_flow_masked"),
         temporal_window=int(os.getenv("MOTION_TEMPORAL_WINDOW", "16")),
     )
     activity = ActivityClassifier()
@@ -192,8 +203,15 @@ def main() -> None:
         inactive_frames=int(os.getenv("INACTIVE_DEBOUNCE_FRAMES", "6")),
     )
     missing_tolerance = int(os.getenv("TRACK_MISSING_TOLERANCE_FRAMES", "3"))
-    min_track_hits_for_kpi = int(os.getenv("MIN_TRACK_HITS", "3"))
-    detector_debug_overlay = os.getenv("DETECTOR_DEBUG_OVERLAY", "1") == "1"
+    min_track_hits_for_kpi = int(os.getenv("MIN_TRACK_HITS_FOR_KPI", os.getenv("MIN_TRACK_HITS", "3")))
+    debug_overlay = os.getenv("DEBUG_OVERLAY", "0") == "1"
+
+    logger.info(
+        "CV pipeline started: detector=%s segmentation_status=%s motion_mode=%s",
+        detector.backend,
+        detector.segmentation.status,
+        motion.mode,
+    )
 
     cap = cv2.VideoCapture(video_path) if video_path else cv2.VideoCapture(0)
     if not cap.isOpened():
@@ -234,24 +252,25 @@ def main() -> None:
             detections = detector.detect(frame)
             tracks = tracker.update(frame, detections)
 
+            kpi_tracks = [t for t in tracks if t.hit_streak >= min_track_hits_for_kpi]
             logger.info(
-                "Frame %s stats: raw_detections=%s filtered_detections=%s tracked_objects=%s",
+                "Frame %s stats: raw_detections=%s accepted_detections=%s rejected_detections=%s tracked_objects=%s",
                 frame_id,
                 detector.last_raw_count,
                 detector.last_filtered_count,
-                len([t for t in tracks if t.hit_streak >= min_track_hits_for_kpi]),
+                len(detector.last_rejections),
+                len(kpi_tracks),
             )
+            write_validation_row(validation_csv, frame_id, detector.last_filtered_count, len(detector.last_rejections), len(kpi_tracks))
 
             cv2.putText(frame, f"detector={detector.backend}", (8, 22), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 2, cv2.LINE_AA)
             cv2.putText(frame, f"motion={motion.mode}", (8, 46), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 2, cv2.LINE_AA)
 
-            if detector_debug_overlay:
-                for det in detections:
-                    x1, y1, x2, y2 = det.bbox
-                    cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 1)
+            if debug_overlay:
                 for rej in detector.last_rejections:
                     x1, y1, x2, y2 = rej.bbox
                     cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 0, 255), 1)
+                    cv2.putText(frame, rej.reason, (x1, y1 + 12), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 0, 255), 1, cv2.LINE_AA)
 
             for tr in tracks:
                 if tr.lost_frames > missing_tolerance:
@@ -267,9 +286,11 @@ def main() -> None:
                         full_body_score=0.0,
                         articulated_score=0.0,
                         productive_score=0.0,
+                        mask_motion_density=0.0,
+                        persistence_score=0.0,
                     )
                 else:
-                    motion_result = motion.analyze(frame, tr.track_id, tr.bbox)
+                    motion_result = motion.analyze(frame, tr.track_id, tr.bbox, tr.mask, tr.label)
                     confirmed_state = debouncer.update(tr.track_id, motion_result.state)
                     motion_result.state = confirmed_state
 

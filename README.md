@@ -113,9 +113,7 @@ This script starts the stack, waits briefly, prints service status, and shows re
 - Kafka now waits for healthy Zookeeper in Compose, and CV waits for Kafka broker reachability before producing events.
 - CV requires a valid video input. For container runs, prefer a short fixed-camera clip in `data/raw_videos/` or set `VIDEO_SOURCE` to a mounted file.
 - Select motion pipeline with `MOTION_ANALYSIS_MODE`:
-  - `optical_flow_yolo` (default)
-  - `c3d_yolo`
-  - `lstm_yolo`
+  - `optical_flow_masked` (default, segmentation-guided)
 
 This helps produce reliable utilization events and downtime metrics (`current_stop_seconds`, `last_stop_seconds`, `total_downtime_seconds`).
 
@@ -124,7 +122,7 @@ After running a short fixed-camera clip, generate per-machine stop-interval vali
 python scripts/validate_short_clip.py
 ```
 
-The primary path for this project scenario is `optical_flow_yolo` + YOLO detections.
+The primary path for this project scenario is `optical_flow_masked` + YOLO detections with optional YOLO segmentation (`yolov8n-seg.pt`).
 
 ### CV model configuration
 
@@ -256,3 +254,19 @@ make demo
 ## Model/data clarification
 
 See `docs/model_data_faq.md` for a direct answer on pretrained model usage vs training on downloaded data.
+
+
+## Segmentation-guided utilization upgrade
+
+New CV controls (all optional/configurable):
+
+- `ENABLE_SEGMENTATION=1|0`
+- `SEGMENTATION_BACKEND=yolov8_seg`
+- `SEGMENTATION_MODEL_PATH=yolov8n-seg.pt`
+- `SEGMENTATION_CONFIDENCE_THRESHOLD=0.25`
+- `ROI_MIN_INTERSECTION_RATIO=0.25`
+- `DEBUG_OVERLAY=0` (default keeps rejected detections off business frame)
+
+The service now computes primary motion on accepted equipment masks and uses articulated-aware logic for ACTIVE/INACTIVE and activity labeling.
+
+Class coverage is intentionally explicit and config-driven via `ALLOWED_CLASSES` (with optional aliases through `CLASS_NAME_MAP`).
