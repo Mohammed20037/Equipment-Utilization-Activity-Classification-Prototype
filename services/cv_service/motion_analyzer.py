@@ -12,6 +12,7 @@ class MotionResult:
     motion_source: str
     full_body_score: float
     articulated_score: float
+    productive_score: float
 
 
 class MotionAnalyzer:
@@ -19,7 +20,7 @@ class MotionAnalyzer:
     Motion analyzer with selectable algorithms that can be combined with YOLO detections.
 
     Supported modes:
-      - optical_flow_yolo: dense optical flow inside the detected equipment bbox
+      - optical_flow_yolo: dense optical flow + articulated/chassis decomposition
       - c3d_yolo: lightweight C3D-style temporal energy over a short clip window
       - lstm_yolo: temporal memory score over recent motion observations
     """
@@ -28,11 +29,13 @@ class MotionAnalyzer:
         self,
         full_body_threshold: float = 3.0,
         articulated_threshold: float = 6.0,
+        productive_threshold: float = 4.0,
         mode: str = "optical_flow_yolo",
         temporal_window: int = 16,
     ):
         self.full_body_threshold = full_body_threshold
         self.articulated_threshold = articulated_threshold
+        self.productive_threshold = productive_threshold
         self.mode = mode.lower()
         self.temporal_window = max(4, temporal_window)
 
@@ -55,9 +58,9 @@ class MotionAnalyzer:
         y2 = min(gray.shape[0], y2)
         return x1, y1, x2, y2
 
-    def _compute_flow_scores(self, roi_prev: np.ndarray, roi_now: np.ndarray) -> Tuple[float, float]:
+    def _compute_flow_scores(self, roi_prev: np.ndarray, roi_now: np.ndarray) -> Tuple[float, float, float]:
         if roi_prev.size == 0 or roi_now.size == 0:
-            return 0.0, 0.0
+            return 0.0, 0.0, 0.0
 
         flow = cv2.calcOpticalFlowFarneback(
             roi_prev,
@@ -76,11 +79,16 @@ class MotionAnalyzer:
 
         h, w = roi_now.shape[:2]
         arm_roi = mag[: max(1, h // 2), max(0, w // 2):]
+        chassis_roi = mag[max(0, h // 2):, : max(1, w // 2)]
         articulated_score = float(np.mean(arm_roi)) if arm_roi.size else 0.0
-        return full_body_score, articulated_score
+        chassis_score = float(np.mean(chassis_roi)) if chassis_roi.size else 0.0
+
+        # Productive-motion proxy for fixed-camera equipment clips:
+        # emphasize articulated motion and discount purely translational/chassis drift.
+        productive_score = max(articulated_score, full_body_score - (0.55 * chassis_score))
+        return full_body_score, articulated_score, productive_score
 
     def _c3d_style_score(self, clip: Deque[np.ndarray]) -> float:
-        """C3D-like temporal energy proxy over a short frame clip."""
         if len(clip) < 3:
             return 0.0
         energies = []
@@ -91,7 +99,6 @@ class MotionAnalyzer:
         return float(np.mean(energies)) if energies else 0.0
 
     def _lstm_style_score(self, history: Deque[float]) -> float:
-        """LSTM-like temporal memory proxy using exponentially weighted history."""
         if not history:
             return 0.0
         values = np.array(history, dtype=np.float32)
@@ -111,6 +118,7 @@ class MotionAnalyzer:
 
         full_body_score = center_shift
         articulated_score = 0.0
+        productive_score = 0.0
         motion_source = "stationary"
 
         x1, y1, x2, y2 = self._clip_bbox(gray, bbox)
@@ -118,27 +126,30 @@ class MotionAnalyzer:
             roi_now = gray[y1:y2, x1:x2]
             roi_prev = self.prev_gray[y1:y2, x1:x2]
 
-            flow_full, flow_articulated = self._compute_flow_scores(roi_prev, roi_now)
-            self.track_motion_history[track_id].append(flow_full)
+            flow_full, flow_articulated, flow_productive = self._compute_flow_scores(roi_prev, roi_now)
+            self.track_motion_history[track_id].append(flow_productive)
             self.track_gray_clips[track_id].append(roi_now)
 
             if self.mode == "c3d_yolo":
                 full_body_score = self._c3d_style_score(self.track_gray_clips[track_id])
                 articulated_score = flow_articulated
+                productive_score = max(flow_productive, full_body_score)
                 motion_source = "c3d_yolo"
             elif self.mode == "lstm_yolo":
                 full_body_score = self._lstm_style_score(self.track_motion_history[track_id])
                 articulated_score = flow_articulated
+                productive_score = max(flow_productive, full_body_score)
                 motion_source = "lstm_yolo"
             else:
                 full_body_score = max(center_shift, flow_full)
                 articulated_score = flow_articulated
+                productive_score = max(flow_productive, full_body_score)
                 motion_source = "optical_flow_yolo"
 
         self.prev_gray = gray
 
-        if full_body_score >= self.full_body_threshold:
-            return MotionResult("ACTIVE", motion_source, full_body_score, articulated_score)
-        if articulated_score >= self.articulated_threshold:
-            return MotionResult("ACTIVE", f"{motion_source}_arm", full_body_score, articulated_score)
-        return MotionResult("INACTIVE", "stationary", full_body_score, articulated_score)
+        if productive_score >= self.productive_threshold:
+            return MotionResult("ACTIVE", motion_source, full_body_score, articulated_score, productive_score)
+        if full_body_score >= self.full_body_threshold or articulated_score >= self.articulated_threshold:
+            return MotionResult("ACTIVE", f"{motion_source}_weak", full_body_score, articulated_score, productive_score)
+        return MotionResult("INACTIVE", "stationary", full_body_score, articulated_score, productive_score)
