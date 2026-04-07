@@ -1,6 +1,6 @@
 # Equipment Utilization Activity Classification Prototype
 
-> A professional, interview-ready prototype for heavy-equipment utilization tracking — built using a microservices architecture, real-time streaming, and computer vision-based motion analysis.
+> A professional, interview-ready prototype for heavy-equipment utilization tracking built using a microservices architecture, real-time streaming, and computer vision-based motion analysis.
 
 This project reflects my ability to design, implement, debug, and stabilize a distributed computer vision pipeline under real engineering constraints — including integration mismatches, environment inconsistencies, and system reliability challenges. It's intentionally structured as a production-style prototype, with a focus on architecture correctness, modularity, validation, and extensibility.
 
