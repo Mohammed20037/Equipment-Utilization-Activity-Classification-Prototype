@@ -273,7 +273,8 @@ Currently, motion is analyzed within bounding boxes. The next step is switching 
 
 ## 📊 Demo
 
-> **[ PLACEHOLDER — Demo GIF will be added here ]**
+
+<video src="https://github.com/user-attachments/assets/2911904c-45e3-4488-8912-52b4a267383e" controls width="100%"></video>
 
 ---
 
